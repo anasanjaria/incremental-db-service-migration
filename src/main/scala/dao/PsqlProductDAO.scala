@@ -3,9 +3,9 @@ package dao
 import scala.concurrent.Future
 
 /**
- * Postgres based implementation for User DAO.
+ * Postgres based implementation for managing products.
  * */
-class PsqlUserDAO extends ProductDAO {
+class PsqlProductDAO extends ProductDAO {
 
   override def storeProduct(userId: Int, productName: String): Future[Int] = ???
 }
