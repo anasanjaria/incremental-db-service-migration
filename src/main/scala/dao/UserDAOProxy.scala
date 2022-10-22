@@ -1,5 +1,7 @@
 package dao
 
+import utils.IncrementalRollout
+
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.control.NonFatal
@@ -7,6 +9,7 @@ import scala.util.control.NonFatal
 class UserDAOProxy(
  private[dao] val mongodbUserDAO: MongodbUserDAO,
  private[dao] val psqlUserDAO: PsqlUserDAO,
+ private[dao] val rollout: IncrementalRollout,
  private implicit val executionContext: ExecutionContext
 ) extends ProductDAO {
 
@@ -14,7 +17,8 @@ class UserDAOProxy(
     store[(Int, String), Int](
       (mongodbUserDAO.storeProduct _).tupled,
       (psqlUserDAO.storeProduct _).tupled,
-      (userId, productName)
+      (userId, productName),
+      userId
     )
   }
 
@@ -24,24 +28,29 @@ class UserDAOProxy(
    * @param mongodbF a method represents monogdb implementation
    * @param psqlF a method represents postgres implementation
    * @param params arguments necessary for a given method.
+   * @param userId User id
    * @return a `Future` holding a result
    * */
-  private def store[A, B](mongodbF: A => Future[B], psqlF: A => Future[B], params: A): Future[B] = {
-    val psqlResult = psqlF(params).recover {
-      case NonFatal(t) =>
-        // For the sake of simplicity, I used print statement.
-        // Usually, we use logging framework here.
-        println("Encountered failure during writing in psql")
-        t.printStackTrace()
-    }
-
+  private def store[A, B](mongodbF: A => Future[B], psqlF: A => Future[B], params: A, userId: Int): Future[B] = {
     val mongodbResult = mongodbF(params)
 
-    for {
-      _ <- psqlResult
-      r <- mongodbResult
-    } yield {
-      r
+    if(rollout.isAllowed(userId)) {
+      val psqlResult = psqlF(params).recover {
+        case NonFatal(t) =>
+          // For the sake of simplicity, I used print statement.
+          // Usually, we use logging framework here.
+          println("Encountered failure during writing in psql")
+          t.printStackTrace()
+      }
+
+      for {
+        _ <- psqlResult
+        r <- mongodbResult
+      } yield {
+        r
+      }
+    } else {
+      mongodbResult
     }
   }
 
